@@ -29,10 +29,11 @@ func main() {
 	privateRepos := flag.Bool("private-repos", false, "If true, the rest-server will only allow access to private repositories")
 	debug := flag.Bool("debug", false, "output debug information")
 	maxRepoSize := flag.Int64("max-repo-size", 0, "maximum size of a repository in bytes (0 means no limit)")
+	hostName := flag.String("hostname", "restic-gw", "Tailscale hostname for the server")
 
 	flag.Parse()
 
-	srv := &tsnet.Server{Hostname: "restic-gw", AuthKey: *authKey}
+	srv := &tsnet.Server{Hostname: *hostName, AuthKey: *authKey}
 	defer srv.Close()
 	ln, err := srv.ListenTLS("tcp", ":443")
 	if err != nil {
