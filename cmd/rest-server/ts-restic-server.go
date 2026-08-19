@@ -26,7 +26,7 @@ func main() {
 	authKey := flag.String("ts-authkey", os.Getenv("TS_AUTHKEY"), "Tailscale auth key to use for tsnet server")
 	path := flag.String("path", filepath.Join(os.TempDir(), "restic"), "Data directory")
 	appendOnly := flag.Bool("append-only", false, "If true, the rest-server will be in append-only mode")
-	privateReops := flag.Bool("private-repos", false, "If true, the rest-server will only allow access to private repositories")
+	privateRepos := flag.Bool("private-repos", false, "If true, the rest-server will only allow access to private repositories")
 	debug := flag.Bool("debug", false, "output debug information")
 	maxRepoSize := flag.Int64("max-repo-size", 0, "maximum size of a repository in bytes (0 means no limit)")
 
@@ -46,7 +46,7 @@ func main() {
 	restHandler, err := restserver.NewHandler(&restserver.Server{
 		Path:              *path,
 		AppendOnly:        *appendOnly,
-		PrivateRepos:      *privateReops,
+		PrivateRepos:      *privateRepos,
 		ProxyAuthUsername: "X-Tailscale-User",
 		Debug:             *debug,
 		MaxRepoSize:       *maxRepoSize,
