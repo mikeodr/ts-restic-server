@@ -30,3 +30,8 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+# Added by goreleaser init:
+dist/
+
+# local build output
+/rest-server
