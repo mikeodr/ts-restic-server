@@ -1,0 +1,46 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+    - sh -c '{{ if .IsSnapshot }}exit 0{{ else }}test -n "{{ .Env.VERSION }}"{{ end }}'
+    - sh -c '{{ if .IsSnapshot }}exit 0{{ else }}test "{{ .Env.VERSION }}" = "{{ .Tag }}"{{ end }}'
+    - sh -c '{{ if .IsSnapshot }}exit 0{{ else }}git diff --quiet --exit-code{{ end }}'
+    - sh -c '{{ if .IsSnapshot }}exit 0{{ else }}git diff --cached --quiet --exit-code{{ end }}'
+
+builds:
+  - main: ./cmd/rest-server
+    binary: rest-server
+    ldflags:
+      - -X main.versionStamp={{ .Tag }}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - arm64
+      - amd64
+      - "386"
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

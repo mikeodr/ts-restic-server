@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v1.2.3)"
+        required: true
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - ".goreleaser.yaml"
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Determine release mode
+        id: mode
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            echo "args=release --clean --skip=publish --snapshot" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=release --clean" >> "$GITHUB_OUTPUT"
+            echo "version=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7.2.3
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: ${{ steps.mode.outputs.args }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.mode.outputs.version }}
+
+      - name: Verify --version flag
+        run: |
+          BINARY=$(find dist -path '*linux*amd64*' -name 'rest-server' -type f | head -1)
+          [ -n "$BINARY" ] || { echo "ERROR: could not find linux/amd64 binary in dist/"; exit 1; }
+          GOT=$("$BINARY" --version | awk '{print $2}')
+          echo "Version: $GOT"
+          [ -n "$GOT" ] || { echo "ERROR: --version produced empty output"; exit 1; }
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            EXPECTED="${{ steps.mode.outputs.version }}"
+            [ "$GOT" = "$EXPECTED" ] || { echo "ERROR: expected $EXPECTED got $GOT"; exit 1; }
+          fi

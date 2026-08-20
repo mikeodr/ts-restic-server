@@ -12,15 +12,27 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
+	"strings"
 
 	restserver "github.com/restic/rest-server"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 )
+
+// baseVersion is the fallback version used when a build isn't stamped by
+// goreleaser, e.g. `go build`/`go install` from source. It's deliberately
+// not a valid-looking release tag so it can't be mistaken for one.
+const baseVersion = "unreleased"
+
+// versionStamp is set by release builds with -ldflags.
+var versionStamp string
 
 func main() {
 
@@ -32,8 +44,14 @@ func main() {
 	maxRepoSize := flag.Int64("max-repo-size", 0, "maximum size of a repository in bytes (0 means no limit)")
 	capability := flag.String("capability", "", "required Tailscale app capability for clients")
 	hostName := flag.String("hostname", "restic-gw", "Tailscale hostname for the server")
+	showVersion := flag.Bool("version", false, "print the version and exit")
+	showVersionShort := flag.Bool("v", false, "print the version and exit")
 
 	flag.Parse()
+	if *showVersion || *showVersionShort {
+		fmt.Printf("rest-server %s compiled with %v on %v/%v\n", buildVersion(), runtime.Version(), runtime.GOOS, runtime.GOARCH)
+		return
+	}
 
 	srv := &tsnet.Server{Hostname: *hostName, AuthKey: *authKey}
 	defer srv.Close()
@@ -84,6 +102,47 @@ func main() {
 	if err := http.Serve(ln, handler); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func buildVersion() string {
+	if versionStamp != "" {
+		return versionStamp
+	}
+
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return baseVersion + "-dev-unknown"
+	}
+	return buildVersionFromInfo(baseVersion, info)
+}
+
+func buildVersionFromInfo(base string, info *debug.BuildInfo) string {
+	var revision, commitDate string
+	dirty := false
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.time":
+			if len(setting.Value) >= len("2006-01-02") {
+				commitDate = strings.ReplaceAll(setting.Value[:len("2006-01-02")], "-", "")
+			}
+		case "vcs.modified":
+			dirty = setting.Value == "true"
+		}
+	}
+
+	if revision == "" || commitDate == "" {
+		return base + "-dev-unknown"
+	}
+	if len(revision) > 9 {
+		revision = revision[:9]
+	}
+	version := fmt.Sprintf("%s-dev%s-%s", base, commitDate, revision)
+	if dirty {
+		version += "-dirty"
+	}
+	return version
 }
 
 func hasCapability(capMap tailcfg.PeerCapMap, required string) bool {
