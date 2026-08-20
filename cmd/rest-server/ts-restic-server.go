@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 
 	restserver "github.com/restic/rest-server"
+	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 )
 
@@ -29,6 +30,7 @@ func main() {
 	privateRepos := flag.Bool("private-repos", false, "If true, the rest-server will only allow access to private repositories")
 	debug := flag.Bool("debug", false, "output debug information")
 	maxRepoSize := flag.Int64("max-repo-size", 0, "maximum size of a repository in bytes (0 means no limit)")
+	capability := flag.String("capability", "", "required Tailscale app capability for clients")
 	hostName := flag.String("hostname", "restic-gw", "Tailscale hostname for the server")
 
 	flag.Parse()
@@ -62,6 +64,10 @@ func main() {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+		if !hasCapability(who.CapMap, *capability) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 
 		// For tagged devices, who.UserProfile.LoginName is empty;
 		// use the node name instead.
@@ -78,4 +84,12 @@ func main() {
 	if err := http.Serve(ln, handler); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func hasCapability(capMap tailcfg.PeerCapMap, required string) bool {
+	if required == "" {
+		return true
+	}
+	_, granted := capMap[tailcfg.PeerCapability(required)]
+	return granted
 }
