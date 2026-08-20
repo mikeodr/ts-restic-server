@@ -86,16 +86,47 @@ restic -r rest:https://restic-gw.tail-scale.ts.net/alice@example.com/other_repo
 
 For tagged devices, the gateway uses the node's computed name when no Tailscale login name is available.
 
-## Flags
+## Capability Grants
 
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--ts-authkey` | `TS_AUTHKEY` | Tailscale auth key |
-| `--path` | `$TMPDIR/restic` | Repository data directory |
-| `--append-only` | `false` | Enable rest-server append-only mode |
-| `--private-repos` | `false` | Restrict each user to a matching repository path |
-| `--debug` | `false` | Enable rest-server debug logging |
-| `--max-repo-size` | `0` | Maximum repository size in bytes; zero means unlimited |
+Use `--capability` to require a Tailscale app capability before a client can access the gateway. The capability name is application-defined; this example uses `example.com/restic-backup`:
+
+```sh
+go run ./cmd/rest-server \
+  --path ./foobar \
+  --hostname restic-gw \
+  --capability example.com/restic-backup
+```
+
+First assign `tag:restic-server` to the gateway node, either by registering it with a tagged auth key or by assigning the tag in the Tailscale admin console; declaring `tagOwners` below only authorizes that assignment. Then grant the capability to the clients that should be allowed to use the gateway. For example, the following Tailscale ACL policy grants it to members of `group:restic-clients` when connecting to `tag:restic-server`:
+
+```json
+{
+  "groups": {
+    "group:restic-clients": ["alice@example.com"]
+  },
+  "tagOwners": {
+    "tag:restic-server": ["autogroup:admin"]
+  },
+  "grants": [
+    {
+      "src": ["group:restic-clients"],
+      "dst": ["tag:restic-server"],
+      "ip": ["443"],
+      "app": {
+        "example.com/restic-backup": ["*"]
+      }
+    }
+  ]
+}
+```
+
+Run restic against the gateway as usual:
+
+```sh
+restic -r rest:https://restic-gw.tail-scale.ts.net/my_repo
+```
+
+Clients without the capability receive `403 Forbidden`.
 
 ## Build
 
