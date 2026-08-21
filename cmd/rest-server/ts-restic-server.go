@@ -2,8 +2,11 @@
 //
 // The gateway authenticates requests using the Tailscale identity of the
 // connecting peer and passes that identity to rest-server through the
-// X-Tailscale-User header. Repository data is stored in the directory given
-// by -path, which defaults to os.TempDir()/restic.
+// X-Tailscale-User header. If -require-capability is set, peers must hold a
+// Tailscale grant for the "restic.net/cap/access" capability to use the
+// server; regardless of that flag, a grant with "admin": true always allows
+// access to any repository under -private-repos. Repository data is stored
+// in the directory given by -path, which defaults to os.TempDir()/restic.
 //
 // The -ts-authkey flag defaults to the TS_AUTHKEY environment variable.
 // Additional rest-server behavior can be configured with -append-only,
@@ -11,6 +14,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -43,7 +47,7 @@ func main() {
 	privateRepos := flag.Bool("private-repos", false, "If true, the rest-server will only allow access to private repositories")
 	debug := flag.Bool("debug", false, "output debug information")
 	maxRepoSize := flag.Int64("max-repo-size", 0, "maximum size of a repository in bytes (0 means no limit)")
-	capability := flag.String("capability", "", "required Tailscale app capability for clients")
+	requireCapability := flag.Bool("require-capability", false, "if true, clients must hold the restic.net/cap/access capability to use the server")
 	hostName := flag.String("hostname", "restic-gw", "Tailscale hostname for the server")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	showVersionShort := flag.Bool("v", false, "print the version and exit")
@@ -83,12 +87,13 @@ func main() {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		if !hasCapability(who.CapMap, *capability) {
+		granted, admin := checkAccess(who.CapMap, *requireCapability)
+		if !granted {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 
-		r.Header.Set("X-Tailscale-User", resolveUser(who))
+		r.Header.Set("X-Tailscale-User", effectiveUser(who, admin, *privateRepos, r.URL.Path))
 		restHandler.ServeHTTP(w, r)
 	})
 
@@ -151,10 +156,71 @@ func resolveUser(who *apitype.WhoIsResponse) string {
 	return user
 }
 
-func hasCapability(capMap tailcfg.PeerCapMap, required string) bool {
-	if required == "" {
-		return true
+// effectiveUser returns the identity to present to rest-server as
+// X-Tailscale-User. rest-server's private-repos check is just
+// folderPath[0] == username, so an admin peer is impersonated as the
+// requested repository's owner: this is the seam that translates the
+// gateway's admin capability into rest-server's ownership convention,
+// granting admins access to any repo without changing rest-server itself.
+func effectiveUser(who *apitype.WhoIsResponse, admin, privateRepos bool, urlPath string) string {
+	if privateRepos && admin {
+		if repo := firstPathSegment(urlPath); repo != "" {
+			return repo
+		}
 	}
-	_, granted := capMap[tailcfg.PeerCapability(required)]
-	return granted
+	return resolveUser(who)
+}
+
+// accessCapability is the fixed Tailscale grant capability that identifies a
+// restic-gw client. Whether holding it is required to use the server at all
+// is controlled by -require-capability; a grant with "admin": true always
+// allows the peer to access any repository under -private-repos, not just
+// the one matching its Tailscale identity, regardless of that flag. Example
+// ACL grants, one rule per group so each peer gets exactly one JSON value
+// for this capability:
+//
+//	"grants": [
+//	    {"src": ["group:restic-users"], "dst": ["tag:restic-gw"], "app": {
+//	        "restic.net/cap/access": [{}],
+//	    }},
+//	    {"src": ["group:restic-admins"], "dst": ["tag:restic-gw"], "app": {
+//	        "restic.net/cap/access": [{"admin": true}],
+//	    }},
+//	],
+const accessCapability = tailcfg.PeerCapability("restic.net/cap/access")
+
+type accessGrant struct {
+	Admin bool `json:"admin"`
+}
+
+// checkAccess reports whether the peer is granted access -- either because
+// it holds the access capability, or because required is false -- and
+// whether any of its access-capability grants set admin.
+//
+// Each grant value is parsed independently, rather than via
+// tailcfg.UnmarshalCapJSON, so that one malformed value (e.g. an ACL typo)
+// can't discard a valid "admin": true entry alongside it.
+func checkAccess(capMap tailcfg.PeerCapMap, required bool) (granted, admin bool) {
+	raws, ok := capMap[accessCapability]
+	if !ok {
+		return !required, false
+	}
+	for _, raw := range raws {
+		var g accessGrant
+		if err := json.Unmarshal([]byte(raw), &g); err != nil {
+			log.Printf("failed to parse %q grant: %v", accessCapability, err)
+			continue
+		}
+		if g.Admin {
+			return true, true
+		}
+	}
+	return true, false
+}
+
+// firstPathSegment returns the first "/"-delimited component of an absolute
+// URL path, e.g. "/alice/config" -> "alice".
+func firstPathSegment(urlPath string) string {
+	segment, _, _ := strings.Cut(strings.TrimPrefix(urlPath, "/"), "/")
+	return segment
 }

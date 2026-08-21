@@ -56,24 +56,126 @@ func TestBuildVersion(t *testing.T) {
 	}
 }
 
-func TestHasCapability(t *testing.T) {
-	const capability = "example.com/restic-backup"
-
+func TestCheckAccess(t *testing.T) {
 	tests := []struct {
-		name    string
-		capMap  tailcfg.PeerCapMap
-		require string
-		want    bool
+		name        string
+		capMap      tailcfg.PeerCapMap
+		required    bool
+		wantGranted bool
+		wantAdmin   bool
 	}{
-		{name: "not required", require: "", want: true},
-		{name: "granted", capMap: tailcfg.PeerCapMap{tailcfg.PeerCapability(capability): {}}, require: capability, want: true},
-		{name: "not granted", require: capability, want: false},
+		{name: "not required, no capability", required: false, wantGranted: true},
+		{name: "required, no capability", required: true, wantGranted: false},
+		{
+			name:        "required, granted, no grant body",
+			capMap:      tailcfg.PeerCapMap{accessCapability: {}},
+			required:    true,
+			wantGranted: true,
+		},
+		{
+			name: "required, granted without admin",
+			capMap: tailcfg.PeerCapMap{
+				accessCapability: {tailcfg.RawMessage(`{"admin":false}`)},
+			},
+			required:    true,
+			wantGranted: true,
+		},
+		{
+			name: "required, granted with admin",
+			capMap: tailcfg.PeerCapMap{
+				accessCapability: {tailcfg.RawMessage(`{"admin":true}`)},
+			},
+			required:    true,
+			wantGranted: true,
+			wantAdmin:   true,
+		},
+		{
+			name: "not required but admin grant still recognized",
+			capMap: tailcfg.PeerCapMap{
+				accessCapability: {tailcfg.RawMessage(`{"admin":true}`)},
+			},
+			required:    false,
+			wantGranted: true,
+			wantAdmin:   true,
+		},
+		{
+			name: "admin among multiple grants",
+			capMap: tailcfg.PeerCapMap{
+				accessCapability: {
+					tailcfg.RawMessage(`{}`),
+					tailcfg.RawMessage(`{"admin":true}`),
+				},
+			},
+			required:    true,
+			wantGranted: true,
+			wantAdmin:   true,
+		},
+		{
+			name: "malformed grant body still grants but not admin",
+			capMap: tailcfg.PeerCapMap{
+				accessCapability: {tailcfg.RawMessage(`not json`)},
+			},
+			required:    true,
+			wantGranted: true,
+		},
+		{
+			name: "admin entry survives a malformed sibling entry",
+			capMap: tailcfg.PeerCapMap{
+				accessCapability: {
+					tailcfg.RawMessage(`{"admin":true}`),
+					tailcfg.RawMessage(`{"admin":"true"}`), // e.g. ACL typo: string, not bool
+				},
+			},
+			required:    true,
+			wantGranted: true,
+			wantAdmin:   true,
+		},
+		{
+			name: "malformed entry doesn't grant admin on its own",
+			capMap: tailcfg.PeerCapMap{
+				accessCapability: {
+					tailcfg.RawMessage(`{"admin":"true"}`), // e.g. ACL typo: string, not bool
+					tailcfg.RawMessage(`{}`),
+				},
+			},
+			required:    true,
+			wantGranted: true,
+			wantAdmin:   false,
+		},
+		{
+			name: "unrelated capability doesn't grant required access",
+			capMap: tailcfg.PeerCapMap{
+				tailcfg.PeerCapability("example.com/other"): {},
+			},
+			required: true,
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := hasCapability(test.capMap, test.require); got != test.want {
-				t.Fatalf("hasCapability() = %t, want %t", got, test.want)
+			gotGranted, gotAdmin := checkAccess(test.capMap, test.required)
+			if gotGranted != test.wantGranted || gotAdmin != test.wantAdmin {
+				t.Fatalf("checkAccess() = (%t, %t), want (%t, %t)", gotGranted, gotAdmin, test.wantGranted, test.wantAdmin)
+			}
+		})
+	}
+}
+
+func TestFirstPathSegment(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "/alice/config", want: "alice"},
+		{path: "/alice", want: "alice"},
+		{path: "/", want: ""},
+		{path: "", want: ""},
+	}
+
+	for _, test := range tests {
+		t.Run(test.path, func(t *testing.T) {
+			if got := firstPathSegment(test.path); got != test.want {
+				t.Fatalf("firstPathSegment(%q) = %q, want %q", test.path, got, test.want)
 			}
 		})
 	}

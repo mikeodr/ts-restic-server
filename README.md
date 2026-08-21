@@ -88,14 +88,16 @@ For tagged devices, the gateway uses the node's computed name when no Tailscale 
 
 ## Capability Grants
 
-Use `--capability` to require a Tailscale app capability before a client can access the gateway. The capability name is application-defined; this example uses `example.com/restic-backup`:
+Use `--require-capability` to require clients to hold a Tailscale grant for the fixed `restic.net/cap/access` capability before they can reach the gateway at all:
 
 ```sh
 go run ./cmd/rest-server \
   --path ./foobar \
   --hostname restic-gw \
-  --capability example.com/restic-backup
+  --require-capability
 ```
+
+Clients without the capability receive `403 Forbidden`. When `--require-capability` is not set (the default), any authenticated Tailscale peer can reach the gateway, and the `restic.net/cap/access` capability only matters for granting [admin access](#admin-access).
 
 First assign `tag:restic-server` to the gateway node, either by registering it with a tagged auth key or by assigning the tag in the Tailscale admin console; declaring `tagOwners` below only authorizes that assignment. Then grant the capability to the clients that should be allowed to use the gateway. For example, the following Tailscale ACL policy grants it to members of `group:restic-clients` when connecting to `tag:restic-server`:
 
@@ -113,7 +115,7 @@ First assign `tag:restic-server` to the gateway node, either by registering it w
       "dst": ["tag:restic-server"],
       "ip": ["443"],
       "app": {
-        "example.com/restic-backup": ["*"]
+        "restic.net/cap/access": [{}]
       }
     }
   ]
@@ -126,7 +128,29 @@ Run restic against the gateway as usual:
 restic -r rest:https://restic-gw.tail-scale.ts.net/my_repo
 ```
 
-Clients without the capability receive `403 Forbidden`.
+### Admin Access
+
+Under `--private-repos`, a client is normally confined to the repository path matching its own Tailscale identity (see [Private Repositories](#private-repositories)). Setting `"admin": true` in a client's `restic.net/cap/access` grant lifts that restriction, letting it access any repository on the gateway. This works regardless of `--require-capability` -- admin status is always read from the `restic.net/cap/access` grant, even when holding the capability isn't otherwise required to reach the server:
+
+```json
+{
+  "groups": {
+    "group:restic-admins": ["bob@example.com"]
+  },
+  "grants": [
+    {
+      "src": ["group:restic-admins"],
+      "dst": ["tag:restic-server"],
+      "ip": ["443"],
+      "app": {
+        "restic.net/cap/access": [{"admin": true}]
+      }
+    }
+  ]
+}
+```
+
+Admin access only relaxes the private-repos path check; it does not substitute for the base `restic.net/cap/access` grant.
 
 ## Build
 
