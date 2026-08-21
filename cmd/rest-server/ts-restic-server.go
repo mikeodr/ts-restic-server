@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	restserver "github.com/restic/rest-server"
+	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 )
@@ -87,15 +88,7 @@ func main() {
 			return
 		}
 
-		// For tagged devices, who.UserProfile.LoginName is empty;
-		// use the node name instead.
-		user := who.UserProfile.LoginName
-		if user == "" {
-			user = who.Node.ComputedName // e.g. "db-01" or "tag:prod"
-		}
-
-		r.Header.Set("X-Tailscale-User", user)
-		log.Print(r)
+		r.Header.Set("X-Tailscale-User", resolveUser(who))
 		restHandler.ServeHTTP(w, r)
 	})
 
@@ -143,6 +136,19 @@ func buildVersionFromInfo(base string, info *debug.BuildInfo) string {
 		version += "-dirty"
 	}
 	return version
+}
+
+// resolveUser derives the identity to record for the connecting peer.
+//
+// For tagged devices, who.UserProfile.LoginName isn't empty -- Tailscale
+// sets it to the synthetic value "tagged-devices".
+// Fall back to the node's real hostname in that case.
+func resolveUser(who *apitype.WhoIsResponse) string {
+	user := who.UserProfile.LoginName
+	if user == "" || user == "tagged-devices" {
+		user = who.Node.ComputedName // e.g. "db-01"
+	}
+	return user
 }
 
 func hasCapability(capMap tailcfg.PeerCapMap, required string) bool {

@@ -4,6 +4,7 @@ import (
 	"runtime/debug"
 	"testing"
 
+	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/tailcfg"
 )
 
@@ -73,6 +74,55 @@ func TestHasCapability(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := hasCapability(test.capMap, test.require); got != test.want {
 				t.Fatalf("hasCapability() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestResolveUser(t *testing.T) {
+	tests := []struct {
+		name string
+		who  *apitype.WhoIsResponse
+		want string
+	}{
+		{
+			name: "regular user",
+			who: &apitype.WhoIsResponse{
+				UserProfile: &tailcfg.UserProfile{LoginName: "alice@example.com"},
+				Node:        &tailcfg.Node{ComputedName: "alices-laptop"},
+			},
+			want: "alice@example.com",
+		},
+		{
+			name: "tagged device reports synthetic login name",
+			who: &apitype.WhoIsResponse{
+				UserProfile: &tailcfg.UserProfile{LoginName: "tagged-devices"},
+				Node:        &tailcfg.Node{ComputedName: "db-01"},
+			},
+			want: "db-01",
+		},
+		{
+			name: "empty login name falls back to node name",
+			who: &apitype.WhoIsResponse{
+				UserProfile: &tailcfg.UserProfile{LoginName: ""},
+				Node:        &tailcfg.Node{ComputedName: "db-01"},
+			},
+			want: "db-01",
+		},
+		{
+			name: "no fallback available",
+			who: &apitype.WhoIsResponse{
+				UserProfile: &tailcfg.UserProfile{LoginName: ""},
+				Node:        &tailcfg.Node{ComputedName: ""},
+			},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveUser(tt.who); got != tt.want {
+				t.Errorf("resolveUser() = %q, want %q", got, tt.want)
 			}
 		})
 	}
