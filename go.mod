@@ -1,10 +1,10 @@
 module github.com/mikeodr/ts-restic-server
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/restic/rest-server v0.14.0
-	tailscale.com v1.104.1
+	tailscale.com v1.104.2
 )
 
 require (
