@@ -1,6 +1,6 @@
 module github.com/mikeodr/ts-restic-server
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/restic/rest-server v0.14.0
